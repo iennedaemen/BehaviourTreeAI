@@ -1,0 +1,521 @@
+#include "stdafx.h"
+#include "Plugin.h"
+#include "IExamInterface.h"
+#include "Blackboard.h"
+#include "BehaviorTree.h"
+#include "Behaviors.h"
+#include "BehaviorsInventory.h"
+
+//Called only once, during initialization
+static int inventorySize = 5;
+void Plugin::Initialize(IBaseInterface* pInterface, PluginInfo& info)
+{
+	//Retrieving the interface
+	//This interface gives you access to certain actions the AI_Framework can perform for you
+	m_pInterface = static_cast<IExamInterface*>(pInterface);
+	m_pBlackboard->SetInterface(m_pInterface);
+
+	//Bit information about the plugin
+	//Please fill this in!!
+	info.BotName = "BtExam";
+	info.Student_FirstName = "Ienne";
+	info.Student_LastName = "Daemen";
+	info.Student_Class = "2DAE06";
+
+}
+
+//Called only once
+void Plugin::DllInit()
+{
+	//Called when the plugin is loaded
+
+	m_pBlackboard = std::make_shared<Blackboard>();
+
+	// inventory
+	m_pBlackboard->AddData("AmountFood", 0);
+	m_pBlackboard->AddData("AmountMedKit", 0);
+	m_pBlackboard->AddData("AmountGuns", 0);
+	m_pBlackboard->AddData("NearestItemPosition", Elite::Vector2{ 0,0 });
+	m_pBlackboard->AddData("UsedInventorySlots", std::vector<bool>{false, false, false, false, false});
+	m_pBlackboard->AddData("AmountItemsFOV", 0);
+	ItemInfo item{ eItemType::GARBAGE, {0,0}, 0 };
+	m_pBlackboard->AddData("PickupItem", item);
+	m_pBlackboard->AddData("Items", std::vector<ItemInfo>{item, item, item, item, item});
+
+	// agent
+	m_pBlackboard->AddData("Agent", AgentInfo());
+	m_pBlackboard->AddData("Steering", SteeringPlugin_Output());
+	m_pBlackboard->AddData("FleeTime", 110.0f);
+	m_pBlackboard->AddData("Fleeing", false);
+
+	// enemy
+	m_pBlackboard->AddData("NearestEnemy", EnemyInfo());
+	m_pBlackboard->AddData("AmountEnemiesFOV", 0);
+
+
+	// house
+	m_pBlackboard->AddData("HousesNotSearchedPos", std::vector<Elite::Vector2>());
+	m_pBlackboard->AddData("HousesSearchedPos", std::vector<Elite::Vector2>());
+	m_pBlackboard->AddData("InsideHouse", HouseInfo());
+	m_pBlackboard->AddData("Grid", std::vector<std::vector<Elite::Vector2>>());
+	m_pBlackboard->AddData("SearchedHouse", false);
+	m_pBlackboard->AddData("HousesFOV", std::vector<HouseInfo>());
+
+
+
+	// BEHAVIOR TREE
+
+	// inventory
+		// food
+	std::vector<std::shared_ptr<Behavior>> pBehaviorStoreFood{
+		std::make_shared<BehaviorConditional>(IsFood),
+		std::make_shared<BehaviorConditional>(RoomInInventory),
+		std::make_shared<BehaviorAction>(StoreFood)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorMedkitForFood{
+		std::make_shared<BehaviorConditional>(IsFood),
+		std::make_shared<BehaviorConditional>(NeedsFood),
+		std::make_shared<BehaviorConditional>(CanLoseMedkit),
+		std::make_shared<BehaviorAction>(RemoveMedkit),
+		std::make_shared<BehaviorAction>(StoreFood)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorPistolForFood{
+		std::make_shared<BehaviorConditional>(IsFood),
+		std::make_shared<BehaviorConditional>(NeedsFood),
+		std::make_shared<BehaviorConditional>(CanLosePistol),
+		std::make_shared<BehaviorAction>(RemovePistol),
+		std::make_shared<BehaviorAction>(StoreFood)
+	};
+
+
+
+		// medkit
+	std::vector<std::shared_ptr<Behavior>> pBehaviorStoreMedkit{
+		std::make_shared<BehaviorConditional>(IsMedkit),
+		std::make_shared<BehaviorConditional>(RoomInInventory),
+		std::make_shared<BehaviorAction>(StoreMedkit)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorFoodForMedkit{
+		std::make_shared<BehaviorConditional>(IsMedkit),
+		std::make_shared<BehaviorConditional>(NeedsMedkit),
+		std::make_shared<BehaviorConditional>(canLoseFood),
+		std::make_shared<BehaviorAction>(RemoveFood),
+		std::make_shared<BehaviorAction>(StoreMedkit)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorPistolForMedkit{
+		std::make_shared<BehaviorConditional>(IsMedkit),
+		std::make_shared<BehaviorConditional>(NeedsMedkit),
+		std::make_shared<BehaviorConditional>(CanLosePistol),
+		std::make_shared<BehaviorAction>(RemovePistol),
+		std::make_shared<BehaviorAction>(StoreMedkit)
+	};
+
+		// pistol
+	std::vector<std::shared_ptr<Behavior>> pBehaviorStorePistol{
+		std::make_shared<BehaviorConditional>(IsPistol),
+		std::make_shared<BehaviorConditional>(RoomInInventory),
+		std::make_shared<BehaviorAction>(StorePistol)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorFoodForPistol{
+		std::make_shared<BehaviorConditional>(IsPistol),
+		std::make_shared<BehaviorConditional>(NeedsPistol),
+		std::make_shared<BehaviorConditional>(canLoseFood),
+		std::make_shared<BehaviorAction>(RemoveFood),
+		std::make_shared<BehaviorAction>(StorePistol)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorMedkitForPistol{
+		std::make_shared<BehaviorConditional>(IsPistol),
+		std::make_shared<BehaviorConditional>(NeedsPistol),
+		std::make_shared<BehaviorConditional>(CanLoseMedkit),
+		std::make_shared<BehaviorAction>(RemoveMedkit),
+		std::make_shared<BehaviorAction>(StorePistol)
+	};
+
+
+
+
+
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorEat{
+		std::make_shared<BehaviorConditional>(HasFood),
+		std::make_shared<BehaviorConditional>(IsHungry),
+		std::make_shared<BehaviorAction>(Eat)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorAttack{
+		std::make_shared<BehaviorConditional>(HasPistol),
+		std::make_shared<BehaviorConditional>(WantToAttack),
+		std::make_shared<BehaviorAction>(Attack)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorHeal{
+	std::make_shared<BehaviorConditional>(HasMedKid),
+	std::make_shared<BehaviorConditional>(ShouldHeal),
+	std::make_shared<BehaviorAction>(Heal)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorCollectItem{
+	std::make_shared<BehaviorConditional>(SeesItem),
+	std::make_shared<BehaviorAction>(SeekItem)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorFlee{
+	std::make_shared<BehaviorConditional>(ShouldFlee),
+	std::make_shared<BehaviorAction>(Flee)
+	};
+
+
+	// house
+	std::vector<std::shared_ptr<Behavior>> pBehaviorGoToHouse{
+	std::make_shared<BehaviorConditional>(NeedsItem),
+	std::make_shared<BehaviorConditional>(HouseNotSearched),
+	std::make_shared<BehaviorAction>(SeekHouse),
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorExploreHouse{
+	std::make_shared<BehaviorConditional>(InsideHouse),
+	std::make_shared<BehaviorConditional>(NotExploredHouse),
+	std::make_shared<BehaviorAction>(ExploreHouse)
+	};
+
+	m_pBehaviorTree = std::make_shared<BehaviorTree>(m_pBlackboard, std::make_shared<BehaviorSelector>(std::vector<std::shared_ptr<Behavior>>{
+		std::make_shared<BehaviorSequence>(pBehaviorEat),
+		std::make_shared<BehaviorSequence>(pBehaviorAttack),
+		std::make_shared<BehaviorSequence>(pBehaviorHeal),
+
+			std::make_shared<BehaviorSelector>(std::vector<std::shared_ptr<Behavior>>{
+				std::make_shared<BehaviorSequence>(pBehaviorStoreFood),
+				std::make_shared<BehaviorSequence>(pBehaviorMedkitForFood),
+				std::make_shared<BehaviorSequence>(pBehaviorPistolForFood),
+
+				std::make_shared<BehaviorSequence>(pBehaviorStoreMedkit),
+				std::make_shared<BehaviorSequence>(pBehaviorFoodForMedkit),
+				std::make_shared<BehaviorSequence>(pBehaviorPistolForMedkit),
+
+				std::make_shared<BehaviorSequence>(pBehaviorStorePistol),
+				std::make_shared<BehaviorSequence>(pBehaviorFoodForPistol),
+				std::make_shared<BehaviorSequence>(pBehaviorMedkitForPistol),
+
+		}),
+
+		std::make_shared<BehaviorSelector>(std::vector<std::shared_ptr<Behavior>>{
+			std::make_shared<BehaviorSequence>(pBehaviorFlee),
+			//std::make_shared<BehaviorSequence>(pBehaviorCollectItem),
+			std::make_shared<BehaviorSequence>(pBehaviorExploreHouse),
+			std::make_shared<BehaviorSequence>(pBehaviorGoToHouse),
+			std::make_shared<BehaviorAction>(pBehaviorSeekCheckpoint)
+			})
+	}));
+}
+
+//Called only once
+void Plugin::DllShutdown()
+{
+	//Called wheb the plugin gets unloaded
+}
+
+//Called only once, during initialization
+void Plugin::InitGameDebugParams(GameDebugParams& params)
+{
+	params.AutoFollowCam = true; //Automatically follow the AI? (Default = true)
+	params.RenderUI = true; //Render the IMGUI Panel? (Default = true)
+	params.SpawnEnemies = true; //Do you want to spawn enemies? (Default = true)
+	params.EnemyCount = 30; //How many enemies? (Default = 20)
+	params.GodMode = true; //GodMode > You can't die, can be usefull to inspect certain behaviours (Default = false)
+							//params.LevelFile = "LevelTwo.gppl";
+	params.AutoGrabClosestItem = false; //A call to Item_Grab(...) returns the closest item that can be grabbed. (EntityInfo argument is ignored)
+	params.OverrideDifficulty = false;
+	params.Difficulty = 2.f;
+}
+
+//Only Active in DEBUG Mode
+//(=Use only for Debug Purposes)
+void Plugin::Update(float dt)
+{
+	//Demo Event Code
+	//In the end your AI should be able to walk around without external input
+	if (m_pInterface->Input_IsMouseButtonUp(Elite::InputMouseButton::eLeft))
+	{
+		//Update target based on input
+		Elite::MouseData mouseData = m_pInterface->Input_GetMouseData(Elite::InputType::eMouseButton, Elite::InputMouseButton::eLeft);
+		const Elite::Vector2 pos = Elite::Vector2(static_cast<float>(mouseData.X), static_cast<float>(mouseData.Y));
+		m_Target = m_pInterface->Debug_ConvertScreenToWorld(pos);
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyDown(Elite::eScancode_Space))
+	{
+		m_CanRun = true;
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyDown(Elite::eScancode_Left))
+	{
+		m_AngSpeed -= Elite::ToRadians(10);
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyDown(Elite::eScancode_Right))
+	{
+		m_AngSpeed += Elite::ToRadians(10);
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyDown(Elite::eScancode_G))
+	{
+		m_GrabItem = true;
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyDown(Elite::eScancode_U))
+	{
+		m_UseItem = true;
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyDown(Elite::eScancode_R))
+	{
+		m_RemoveItem = true;
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyUp(Elite::eScancode_Space))
+	{
+		m_CanRun = false;
+	}
+}
+
+//Update
+//This function calculates the new SteeringOutput, called once per frame
+SteeringPlugin_Output Plugin::UpdateSteering(float dt)
+{
+
+	auto agentInfo = m_pInterface->Agent_GetInfo();
+	auto vHousesInFOV = GetHousesInFOV();
+	auto vEntitiesInFOV = GetEntitiesInFOV();
+
+	m_pBlackboard->ChangeData("HousesFOV", vHousesInFOV);
+
+
+	///////////////////////////////////////
+	// FOV
+	///////////////////////////////////////
+	int amountEnemiesFOV{};
+	m_pBlackboard->ChangeData("AmountEnemiesFOV", 0);
+	int amountItemsFOV{};
+	m_pBlackboard->ChangeData("AmountItemsFOV", 0);
+	float minDistEnemy{1000.0f};
+	float minDistItem{ 1000.0f };
+
+	for (auto entity : vEntitiesInFOV)
+	{
+		if (entity.Type == eEntityType::ITEM)
+		{
+			if (minDistItem > Elite::Distance(entity.Location, agentInfo.Position))
+			{
+				minDistItem = Elite::Distance(entity.Location, agentInfo.Position);
+				m_pBlackboard->ChangeData("NearestItemPosition", entity.Location);
+			}
+
+			ItemInfo item;
+			if(agentInfo.GrabRange > Elite::Distance(entity.Location, agentInfo.Position))
+		
+			if (m_pInterface->Item_Grab(entity, item))
+			{
+				m_pBlackboard->ChangeData("PickupItem", item);
+				//m_ItemInfo = item;
+				//PickUp();
+			}
+			++amountItemsFOV;
+		}
+		 
+		if(entity.Type == eEntityType::ENEMY)
+		{
+			EnemyInfo enemy;
+			m_pInterface->Enemy_GetInfo(entity, enemy);
+			amountEnemiesFOV++;
+			if (minDistEnemy > Elite::Distance(entity.Location, agentInfo.Position))
+			{
+				minDistEnemy = Elite::Distance(entity.Location, agentInfo.Position);
+				m_pBlackboard->ChangeData("NearestEnemy", enemy);
+			}
+		}
+	}
+	m_pBlackboard->ChangeData("AmountEnemiesFOV", amountEnemiesFOV);
+	m_pBlackboard->ChangeData("AmountItemsFOV", amountItemsFOV);
+	//////////////////////////////
+
+	///////////////////////////////////////
+	// FLEE
+	///////////////////////////////////////
+	bool fleeing = false;
+	m_pBlackboard->GetData("Fleeing", fleeing);
+
+	if (amountEnemiesFOV > 0 ) fleeing = true;
+	else fleeing = false;
+
+	float fleeTime;
+	m_pBlackboard->GetData("FleeTime", fleeTime);
+	fleeTime -= dt;
+	if(fleeing)
+	{
+		fleeTime = 3.0f;
+	}
+
+	m_pBlackboard->ChangeData("FleeTime", fleeTime);
+	m_pBlackboard->ChangeData("Fleeing", fleeing);
+
+	///////////////////////////////////////
+	// STEERING
+	///////////////////////////////////////
+	SteeringPlugin_Output steering;
+	m_pBlackboard->GetData("Steering", steering);
+	steering.AutoOrientate = true;
+	///////////////////////////////////////
+
+	//m_pBlackboard->ChangeData("Items", m_Inventory);
+	m_pBlackboard->ChangeData("Agent", agentInfo);
+
+	////////////////////////////////////////
+	// HOUSES
+	////////////////////////////////////////
+	auto HousesInFOV = GetHousesInFOV();
+	Elite::Vector2 closestHousepos;
+	HouseInfo closestHouse;
+	int dist = 100000;
+	for (const HouseInfo house : HousesInFOV)
+	{
+		if (find(m_HousesSearched.begin(), m_HousesSearched.end(), house.Center) == m_HousesSearched.end()
+			&& find(m_HousesNotSearched.begin(), m_HousesNotSearched.end(), house.Center) == m_HousesNotSearched.end())
+		{
+			m_HousesNotSearched.push_back(house.Center);
+			m_Houses.push_back(house);
+		}
+	}
+
+	for (size_t i{}; i < m_HousesNotSearched.size(); ++i)
+	{
+		if (dist > Elite::Distance(m_HousesNotSearched[i], agentInfo.Position))
+		{
+			closestHousepos = m_HousesNotSearched[i];
+
+				for(auto house : m_Houses)
+				{
+					if(closestHousepos == house.Center)
+					{
+						closestHouse = house;
+						m_pBlackboard->ChangeData("InsideHouse", closestHouse);
+					}
+				}
+				
+			
+			//closestHouse = m_Houses[i];
+			//m_pBlackboard->ChangeData("InsideHouse", closestHouse);
+			dist = Elite::Distance(m_HousesNotSearched[i], agentInfo.Position);
+		}
+	}
+
+	if(agentInfo.IsInHouse)
+	{
+		auto it = std::find(m_HousesNotSearched.begin(), m_HousesNotSearched.end(), closestHousepos);
+		if (it != m_HousesNotSearched.end())
+		{
+			if (std::find(m_HousesSearched.begin(), m_HousesSearched.end(), closestHousepos) == m_HousesSearched.end())
+			{
+				std::vector < std::vector<Elite::Vector2>> grid;
+				m_pBlackboard->GetData("Grid", grid);
+
+				if (grid.empty() && !m_Search)
+				{
+					m_Search = true;
+					for (auto house : m_Houses)
+					{
+						if (closestHousepos == house.Center)
+						{
+							closestHouse = house;
+							m_pBlackboard->ChangeData("InsideHouse", closestHouse);
+							for (int y{}; y < house.Size.y; y += 10)
+							{
+								if (y != 0)
+								{
+									std::vector<Elite::Vector2> points;
+									for (int x{}; x < house.Size.x; x += 10)
+									{
+										if (x != 0)
+											points.push_back({ house.Center.x - house.Size.x / 2 + x, house.Center.y + house.Size.y / 2 - y });
+									}
+									if(points.size() > 1)
+										points.pop_back();
+									grid.push_back(points);
+								}
+							}
+							if(grid.size() > 1)
+							grid.pop_back();
+						}
+					}
+
+					m_pBlackboard->ChangeData("Grid", grid);
+				}
+
+
+			}
+
+			bool searched;
+			m_pBlackboard->GetData("SearchedHouse", searched);
+			if(searched)
+			{
+				m_HousesSearched.push_back(closestHousepos);
+				it = std::find(m_HousesNotSearched.begin(), m_HousesNotSearched.end(), closestHousepos);
+				std::swap(*it, m_HousesNotSearched.back());
+				m_HousesNotSearched.pop_back();
+				m_pBlackboard->ChangeData("SearchedHouse", false);
+				m_Search = false;
+			}
+		}
+	}
+
+	m_pBlackboard->ChangeData("HousesNotSearchedPos", m_HousesNotSearched);
+	m_pBlackboard->ChangeData("HousesSearchedPos", m_HousesSearched);
+	/////////////////////////////////////
+
+	m_pBehaviorTree->Update();
+
+	return steering;
+}
+
+//This function should only be used for rendering debug elements
+void Plugin::Render(float dt) const
+{
+	//This Render function should only contain calls to Interface->Draw_... functions
+	m_pInterface->Draw_SolidCircle(m_Target, .7f, { 0,0 }, { 1, 0, 0 });
+}
+
+vector<HouseInfo> Plugin::GetHousesInFOV() const
+{
+	vector<HouseInfo> vHousesInFOV = {};
+
+	HouseInfo hi = {};
+	for (int i = 0;; ++i)
+	{
+		if (m_pInterface->Fov_GetHouseByIndex(i, hi))
+		{
+			vHousesInFOV.push_back(hi);
+			continue;
+		}
+
+		break;
+	}
+
+	return vHousesInFOV;
+}
+
+vector<EntityInfo> Plugin::GetEntitiesInFOV() const
+{
+	vector<EntityInfo> vEntitiesInFOV = {};
+
+	EntityInfo ei = {};
+	for (int i = 0;; ++i)
+	{
+		if (m_pInterface->Fov_GetEntityByIndex(i, ei))
+		{
+			vEntitiesInFOV.push_back(ei);
+			continue;
+		}
+
+		break;
+	}
+
+	return vEntitiesInFOV;
+}

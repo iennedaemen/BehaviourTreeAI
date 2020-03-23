@@ -1,0 +1,614 @@
+#include "stdafx.h"
+#include "Plugin.h"
+#include "IExamInterface.h"
+#include "Blackboard.h"
+#include "BehaviorTree.h"
+#include "Behaviors.h"
+
+//Called only once, during initialization
+void Plugin::Initialize(IBaseInterface* pInterface, PluginInfo& info)
+{
+	//Retrieving the interface
+	//This interface gives you access to certain actions the AI_Framework can perform for you
+	m_pInterface = static_cast<IExamInterface*>(pInterface);
+	m_pBlackboard->SetInterface(m_pInterface);
+
+	//Bit information about the plugin
+	//Please fill this in!!
+	info.BotName = "BtExam";
+	info.Student_FirstName = "Ienne";
+	info.Student_LastName = "Daemen";
+	info.Student_Class = "2DAE06";
+
+}
+
+//Called only once
+void Plugin::DllInit()
+{
+	//Called when the plugin is loaded
+
+	m_pBlackboard = std::make_shared<Blackboard>();
+
+	// inventory
+	m_pBlackboard->AddData("AmountFood", 0);
+	m_pBlackboard->AddData("AmountMedKit", 0);
+	m_pBlackboard->AddData("AmountGuns", 0);
+	m_pBlackboard->AddData("NearestItemPosition", Elite::Vector2{ 0,0 });
+	m_pBlackboard->AddData("UsedInventorySlots", std::vector<bool>{false, false, false, false, false});
+	m_pBlackboard->AddData("AmountItemsFOV", 0);
+	m_pBlackboard->AddData("Items", std::vector<ItemInfo>{ ItemInfo(), ItemInfo(), ItemInfo(), ItemInfo(), ItemInfo() });
+
+	// agent
+	m_pBlackboard->AddData("Agent", AgentInfo());
+	m_pBlackboard->AddData("Steering", SteeringPlugin_Output());
+	m_pBlackboard->AddData("FleeTime", 110.0f);
+	m_pBlackboard->AddData("Fleeing", false);
+
+	// enemy
+	m_pBlackboard->AddData("NearestEnemy", EnemyInfo());
+	m_pBlackboard->AddData("AmountEnemiesFOV", 0);
+
+
+	// house
+	m_pBlackboard->AddData("HousesNotSearchedPos", std::vector<Elite::Vector2>());
+	m_pBlackboard->AddData("HousesSearchedPos", std::vector<Elite::Vector2>());
+
+
+
+	// BEHAVIOR TREE
+	std::vector<std::shared_ptr<Behavior>> pBehaviorEat{
+		std::make_shared<BehaviorConditional>(HasFood),
+		std::make_shared<BehaviorConditional>(IsHungry),
+		std::make_shared<BehaviorAction>(Eat)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorAttack{
+		std::make_shared<BehaviorConditional>(HasPistol),
+		std::make_shared<BehaviorConditional>(WantToAttack),
+		std::make_shared<BehaviorAction>(Attack)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorHeal{
+	std::make_shared<BehaviorConditional>(HasMedKid),
+	std::make_shared<BehaviorConditional>(ShouldHeal),
+	std::make_shared<BehaviorAction>(Heal)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorCollectItem{
+	std::make_shared<BehaviorConditional>(SeesItem),
+	std::make_shared<BehaviorAction>(SeekItem)
+	};
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorFlee{
+	std::make_shared<BehaviorConditional>(ShouldFlee),
+	std::make_shared<BehaviorAction>(Flee)
+	};
+
+
+	std::vector<std::shared_ptr<Behavior>> pBehaviorGoToHouse{
+	std::make_shared<BehaviorConditional>(NeedsItem),
+	std::make_shared<BehaviorConditional>(HouseNotSearched),
+	std::make_shared<BehaviorAction>(SeekHouse)
+	};
+
+	m_pBehaviorTree = std::make_shared<BehaviorTree>(m_pBlackboard, std::make_shared<BehaviorSelector>(std::vector<std::shared_ptr<Behavior>>{
+		std::make_shared<BehaviorSequence>(pBehaviorEat),
+		std::make_shared<BehaviorSequence>(pBehaviorAttack),
+		std::make_shared<BehaviorSequence>(pBehaviorHeal),
+
+		std::make_shared<BehaviorSelector>(std::vector<std::shared_ptr<Behavior>>{
+			std::make_shared<BehaviorSequence>(pBehaviorFlee),
+			std::make_shared<BehaviorSequence>(pBehaviorCollectItem),
+			//std::make_shared<BehaviorSequence>(pBehaviorGoToHouse),
+			std::make_shared<BehaviorAction>(SeekCheckpoint)
+			})
+	}));
+}
+
+//Called only once
+void Plugin::DllShutdown()
+{
+	//Called wheb the plugin gets unloaded
+}
+
+//Called only once, during initialization
+void Plugin::InitGameDebugParams(GameDebugParams& params)
+{
+	params.AutoFollowCam = true; //Automatically follow the AI? (Default = true)
+	params.RenderUI = true; //Render the IMGUI Panel? (Default = true)
+	params.SpawnEnemies = true; //Do you want to spawn enemies? (Default = true)
+	params.EnemyCount = 20; //How many enemies? (Default = 20)
+	params.GodMode = false; //GodMode > You can't die, can be usefull to inspect certain behaviours (Default = false)
+							//params.LevelFile = "LevelTwo.gppl";
+	params.AutoGrabClosestItem = true; //A call to Item_Grab(...) returns the closest item that can be grabbed. (EntityInfo argument is ignored)
+	params.OverrideDifficulty = false;
+	params.Difficulty = 2.f;
+}
+
+//Only Active in DEBUG Mode
+//(=Use only for Debug Purposes)
+void Plugin::Update(float dt)
+{
+	//Demo Event Code
+	//In the end your AI should be able to walk around without external input
+	if (m_pInterface->Input_IsMouseButtonUp(Elite::InputMouseButton::eLeft))
+	{
+		//Update target based on input
+		Elite::MouseData mouseData = m_pInterface->Input_GetMouseData(Elite::InputType::eMouseButton, Elite::InputMouseButton::eLeft);
+		const Elite::Vector2 pos = Elite::Vector2(static_cast<float>(mouseData.X), static_cast<float>(mouseData.Y));
+		m_Target = m_pInterface->Debug_ConvertScreenToWorld(pos);
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyDown(Elite::eScancode_Space))
+	{
+		m_CanRun = true;
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyDown(Elite::eScancode_Left))
+	{
+		m_AngSpeed -= Elite::ToRadians(10);
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyDown(Elite::eScancode_Right))
+	{
+		m_AngSpeed += Elite::ToRadians(10);
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyDown(Elite::eScancode_G))
+	{
+		m_GrabItem = true;
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyDown(Elite::eScancode_U))
+	{
+		m_UseItem = true;
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyDown(Elite::eScancode_R))
+	{
+		m_RemoveItem = true;
+	}
+	else if (m_pInterface->Input_IsKeyboardKeyUp(Elite::eScancode_Space))
+	{
+		m_CanRun = false;
+	}
+}
+
+//Update
+//This function calculates the new SteeringOutput, called once per frame
+SteeringPlugin_Output Plugin::UpdateSteering(float dt)
+{
+
+	auto agentInfo = m_pInterface->Agent_GetInfo();
+	auto vHousesInFOV = GetHousesInFOV();
+	auto vEntitiesInFOV = GetEntitiesInFOV();
+
+
+	///////////////////////////////////////
+	// FOV
+	///////////////////////////////////////
+	int amountEnemiesFOV{};
+	m_pBlackboard->ChangeData("AmountEnemiesFOV", 0);
+	int amountItemsFOV{};
+	m_pBlackboard->ChangeData("AmountItemsFOV", 0);
+	int minDistEnemy{1000};
+	int minDistItem{ 1000 };
+
+	for (auto entity : vEntitiesInFOV)
+	{
+		if (entity.Type == eEntityType::ITEM)
+		{
+			if (minDistItem > Elite::Distance(entity.Location, agentInfo.Position))
+			{
+				minDistItem = Elite::Distance(entity.Location, agentInfo.Position);
+				m_pBlackboard->ChangeData("NearestItemPosition", entity.Location);
+			}
+
+			ItemInfo item;
+			if(agentInfo.GrabRange > Elite::Distance(entity.Location, agentInfo.Position))
+			if (m_pInterface->Item_Grab({}, item))
+			{
+				m_ItemInfo = item;
+				PickUp();
+			}
+			++amountItemsFOV;
+		}
+		 
+		if(entity.Type == eEntityType::ENEMY)
+		{
+			EnemyInfo enemy;
+			m_pInterface->Enemy_GetInfo(entity, enemy);
+			amountEnemiesFOV++;
+			if (minDistEnemy > Elite::Distance(entity.Location, agentInfo.Position))
+			{
+				minDistEnemy = Elite::Distance(entity.Location, agentInfo.Position);
+				m_pBlackboard->ChangeData("NearestEnemy", enemy);
+			}
+		}
+	}
+	m_pBlackboard->ChangeData("AmountEnemiesFOV", amountEnemiesFOV);
+	m_pBlackboard->ChangeData("AmountItemsFOV", amountItemsFOV);
+	//////////////////////////////
+
+	///////////////////////////////////////
+	// FLEE
+	///////////////////////////////////////
+	bool fleeing = false;
+	m_pBlackboard->GetData("Fleeing", fleeing);
+	float fleeTime{};
+	m_pBlackboard->GetData("FleeTime", fleeTime);
+
+	if (amountEnemiesFOV > 2 ) fleeing = true;
+	else fleeing = false;
+	if(!fleeing) m_pBlackboard->ChangeData("FleeTime", 0.0f);
+	m_pBlackboard->ChangeData("Fleeing", fleeing);
+
+	///////////////////////////////////////
+	// STEERING
+	///////////////////////////////////////
+	SteeringPlugin_Output steering;
+	m_pBlackboard->GetData("Steering", steering);
+	steering.AutoOrientate = true;
+	///////////////////////////////////////
+
+	m_pBlackboard->ChangeData("Items", m_Inventory);
+	m_pBlackboard->ChangeData("Agent", agentInfo);
+
+	////////////////////////////////////////
+	// HOUSES
+	////////////////////////////////////////
+	auto HousesInFOV = GetHousesInFOV();
+	Elite::Vector2 closestHousepos;
+	int dist = 100000;
+	for (const HouseInfo house : HousesInFOV)
+	{
+		if (find(m_HousesSearched.begin(), m_HousesSearched.end(), house.Center) == m_HousesSearched.end()
+			&& find(m_HousesNotSearched.begin(), m_HousesNotSearched.end(), house.Center) == m_HousesNotSearched.end())
+		{
+			m_HousesNotSearched.push_back(house.Center);
+		}
+	}
+
+	for (int i{}; i < m_HousesNotSearched.size(); ++i)
+	{
+		if (dist > Elite::Distance(m_HousesNotSearched[i], agentInfo.Position))
+		{
+			closestHousepos = m_HousesNotSearched[i];
+		}
+	}
+	if(agentInfo.IsInHouse)
+	{
+		auto it = std::find(m_HousesNotSearched.begin(), m_HousesNotSearched.end(), closestHousepos);
+		if( it != m_HousesNotSearched.end() )
+		{
+			if (std::find(m_HousesSearched.begin(), m_HousesSearched.end(), closestHousepos) == m_HousesSearched.end())
+			{
+				std::swap(m_HousesNotSearched.back(), *it);
+				m_HousesNotSearched.pop_back();
+				m_HousesSearched.push_back(closestHousepos);
+			}
+		}
+	}
+
+	m_pBlackboard->ChangeData("HousesNotSearchedPos", m_HousesNotSearched);
+	m_pBlackboard->ChangeData("HousesSearchedPos", m_HousesSearched);
+	/////////////////////////////////////
+
+	m_pBehaviorTree->Update();
+
+	return steering;
+}
+
+//This function should only be used for rendering debug elements
+void Plugin::Render(float dt) const
+{
+	//This Render function should only contain calls to Interface->Draw_... functions
+	m_pInterface->Draw_SolidCircle(m_Target, .7f, { 0,0 }, { 1, 0, 0 });
+}
+
+vector<HouseInfo> Plugin::GetHousesInFOV() const
+{
+	vector<HouseInfo> vHousesInFOV = {};
+
+	HouseInfo hi = {};
+	for (int i = 0;; ++i)
+	{
+		if (m_pInterface->Fov_GetHouseByIndex(i, hi))
+		{
+			vHousesInFOV.push_back(hi);
+			continue;
+		}
+
+		break;
+	}
+
+	return vHousesInFOV;
+}
+
+vector<EntityInfo> Plugin::GetEntitiesInFOV() const
+{
+	vector<EntityInfo> vEntitiesInFOV = {};
+
+	EntityInfo ei = {};
+	for (int i = 0;; ++i)
+	{
+		if (m_pInterface->Fov_GetEntityByIndex(i, ei))
+		{
+			vEntitiesInFOV.push_back(ei);
+			continue;
+		}
+
+		break;
+	}
+
+	return vEntitiesInFOV;
+}
+
+void Plugin::PickUp()
+{
+	bool stored = false;
+	m_pBlackboard->GetData("UsedInventorySlots", m_UsedItemSlots);
+	m_pBlackboard->GetData("AmountFood", m_FoodCount);
+	m_pBlackboard->GetData("AmountMedKit", m_MedkitCount);
+	m_pBlackboard->GetData("AmountGuns", m_PistolCount);
+
+	if (m_ItemInfo.Type == eItemType::PISTOL)
+	{
+		for (unsigned int i = 0; i < m_UsedItemSlots.size(); ++i)
+		{
+			if (!stored && !m_UsedItemSlots[i])
+			{
+				if (!m_pInterface->Inventory_AddItem(i, m_ItemInfo))
+				{
+					std::cout << "missed call" << std::endl;
+				}
+				m_UsedItemSlots[i] = true;
+				m_Inventory[i] = m_ItemInfo;
+				int amount{};
+				m_pBlackboard->GetData("AmountGuns", amount);
+				m_pBlackboard->ChangeData("AmountGuns", amount + 1);
+				if (m_PistolCount == 0)
+				{
+					m_PistolSlot = i;
+				}
+				m_PistolCount++;
+				stored = true;
+				break;
+			}
+		}
+		if (!stored)
+		{
+			if (m_FoodCount >= 3 && m_PistolCount < 2)
+			{
+				if (!m_pInterface->Inventory_RemoveItem(m_FoodSlot))
+				{
+					std::cout << "missed call" << std::endl;
+				}
+				if (!m_pInterface->Inventory_AddItem(m_FoodSlot, m_ItemInfo))
+				{
+					std::cout << "missed call" << std::endl;
+				}
+				m_Inventory[m_FoodSlot] = m_ItemInfo;
+				int amount{};
+				m_pBlackboard->GetData("AmountGuns", amount);
+				m_pBlackboard->ChangeData("AmountGuns", amount + 1);
+				if (m_PistolCount == 0)
+				{
+					m_PistolSlot = m_FoodSlot;
+				}
+				for (unsigned int i = 0; i < m_Inventory.size(); ++i)
+				{
+					if (m_Inventory[i].Type == eItemType::FOOD)
+					{
+						m_FoodSlot = i;
+						int amount{};
+						m_pBlackboard->GetData("AmountFood", amount);
+						m_pBlackboard->ChangeData("AmountFood", amount - 1);
+						break;
+					}
+				}
+				stored = true;
+			}
+			if (m_MedkitCount >= 3 && m_PistolCount < 2)
+			{
+				if (!m_pInterface->Inventory_RemoveItem(m_MedkitSlot))
+				{
+					std::cout << "missed call" << std::endl;
+				}
+				if (!m_pInterface->Inventory_AddItem(m_MedkitSlot, m_ItemInfo))
+				{
+					std::cout << "missed call" << std::endl;
+				}
+				m_Inventory[m_MedkitSlot] = m_ItemInfo;
+				int amount{};
+				m_pBlackboard->GetData("AmountGuns", amount);
+				m_pBlackboard->ChangeData("AmountGuns", amount + 1);
+				if (m_PistolCount == 0)
+				{
+					m_PistolSlot = m_MedkitSlot;
+				}
+				for (unsigned int i = 0; i < m_Inventory.size(); ++i)
+				{
+					if (m_Inventory[i].Type == eItemType::MEDKIT)
+					{
+						m_MedkitSlot = i;
+						int amount{};
+						m_pBlackboard->GetData("AmountMedKit", amount);
+						m_pBlackboard->ChangeData("AmountMedKit", amount - 1);
+						break;
+					}
+				}
+				stored = true;
+			}
+		}
+	}
+	else if (m_ItemInfo.Type == eItemType::MEDKIT)
+	{
+		for (unsigned int i = 0; i < m_UsedItemSlots.size(); ++i)
+		{
+			if (!stored && !m_UsedItemSlots[i])
+			{
+				if (!m_pInterface->Inventory_AddItem(i, m_ItemInfo))
+				{
+					std::cout << "missed call" << std::endl;
+				}
+				m_UsedItemSlots[i] = true;
+				m_Inventory[i] = m_ItemInfo;
+				int amount{};
+				m_pBlackboard->GetData("AmountMedKit", amount);
+				m_pBlackboard->ChangeData("AmountMedKit", amount + 1);
+				if (m_MedkitCount == 0)
+				{
+					m_MedkitSlot = i;
+				}
+				stored = true;
+				break;
+			}
+		}
+		if (!stored && m_PistolCount >= 2 && m_MedkitCount <= 2)
+		{
+			if (!m_pInterface->Inventory_RemoveItem(m_PistolSlot))
+			{
+				std::cout << "missed call" << std::endl;
+			}
+			if (!m_pInterface->Inventory_AddItem(m_PistolSlot, m_ItemInfo))
+			{
+				std::cout << "missed call" << std::endl;
+			}
+			m_Inventory[m_PistolSlot] = m_ItemInfo;
+			int amount{};
+			m_pBlackboard->GetData("AmountMedKit", amount);
+			m_pBlackboard->ChangeData("AmountMedKit", amount + 1);
+			if (m_MedkitCount == 0)
+			{
+				m_MedkitSlot = m_PistolSlot;
+			}
+			for (unsigned int i = 0; i < m_Inventory.size(); ++i)
+			{
+				if (m_Inventory[i].Type == eItemType::PISTOL)
+				{
+					m_PistolSlot = i;
+					int amount{};
+					m_pBlackboard->GetData("AmountGuns", amount);
+					m_pBlackboard->ChangeData("AmountGuns", amount - 1);
+					break;
+				}
+			}
+			stored = true;
+		}
+
+		if (!stored && m_FoodCount >= 3 && m_MedkitCount <= 2)
+		{
+			if (!m_pInterface->Inventory_RemoveItem(m_FoodSlot))
+			{
+				std::cout << "missed call" << std::endl;
+			}
+			if (!m_pInterface->Inventory_AddItem(m_FoodSlot, m_ItemInfo))
+			{
+				std::cout << "missed call" << std::endl;
+			}
+			m_Inventory[m_FoodSlot] = m_ItemInfo;
+			int amount{};
+			m_pBlackboard->GetData("AmountMedKit", amount);
+			m_pBlackboard->ChangeData("AmountMedKit", amount + 1);
+			if (m_MedkitCount == 0)
+			{
+				m_MedkitSlot = m_FoodSlot;
+			}
+			for (unsigned int i = 0; i < m_Inventory.size(); ++i)
+			{
+				if (m_Inventory[i].Type == eItemType::FOOD)
+				{
+					m_FoodSlot = i;
+					int amount{};
+					m_pBlackboard->GetData("AmountFood", amount);
+					m_pBlackboard->ChangeData("AmountFood", amount - 1);
+					break;
+				}
+			}
+			stored = true;
+		}
+	}
+	else if (m_ItemInfo.Type == eItemType::FOOD)
+	{
+		for (unsigned int i = 0; i < m_UsedItemSlots.size(); ++i)
+		{
+			if (!stored && m_UsedItemSlots[i] == false)
+			{
+				if (!m_pInterface->Inventory_AddItem(i, m_ItemInfo))
+				{
+					std::cout << "missed call" << std::endl;
+				}
+				m_UsedItemSlots[i] = true;
+				m_Inventory[i] = m_ItemInfo;
+				int amount{};
+				m_pBlackboard->GetData("AmountFood", amount);
+				m_pBlackboard->ChangeData("AmountFood", amount + 1);
+				if (m_FoodCount == 0)
+				{
+					m_FoodSlot = i;
+				}
+				stored = true;
+				break;
+			}
+		}
+		if (!stored && m_PistolCount >= 2 && m_FoodCount <= 2)
+		{
+			if (!m_pInterface->Inventory_RemoveItem(m_PistolSlot))
+			{
+				std::cout << "missed call" << std::endl;
+			}
+			if (!m_pInterface->Inventory_AddItem(m_PistolSlot, m_ItemInfo))
+			{
+				std::cout << "missed call" << std::endl;
+			}
+			m_Inventory[m_PistolSlot] = m_ItemInfo;
+			int amount{};
+			m_pBlackboard->GetData("AmountFood", amount);
+			m_pBlackboard->ChangeData("AmountFood", amount + 1);
+			if (m_FoodCount == 0)
+			{
+				m_FoodSlot = m_PistolSlot;
+			}
+			for (unsigned int i = 0; i < m_Inventory.size(); ++i)
+			{
+				if (m_Inventory[i].Type == eItemType::PISTOL)
+				{
+					m_PistolSlot = i;
+					int amount{};
+					m_pBlackboard->GetData("AmountGuns", amount);
+					m_pBlackboard->ChangeData("AmountGuns", amount - 1);
+					break;
+				}
+			}
+			stored = true;
+		}
+		if (!stored && m_MedkitCount >= 3 && m_FoodCount <= 2)
+		{
+			if (!m_pInterface->Inventory_RemoveItem(m_MedkitSlot))
+			{
+				std::cout << "missed call" << std::endl;
+			}
+			if (!m_pInterface->Inventory_AddItem(m_MedkitSlot, m_ItemInfo))
+			{
+				std::cout << "missed call" << std::endl;
+			}
+			m_Inventory[m_MedkitSlot] = m_ItemInfo;
+			int amount{};
+			m_pBlackboard->GetData("AmountFood", amount);
+			m_pBlackboard->ChangeData("AmountFood", amount + 1);
+			if (m_FoodCount == 0)
+			{
+				m_FoodSlot = m_MedkitSlot;
+			}
+			for (unsigned int i = 0; i < m_Inventory.size(); ++i)
+			{
+				if (m_Inventory[i].Type == eItemType::MEDKIT)
+				{
+					m_MedkitSlot = i;
+					int amount{};
+					m_pBlackboard->GetData("AmountMedKit", amount);
+					m_pBlackboard->ChangeData("AmountMedKit", amount - 1);
+					break;
+				}
+			}
+			stored = true;
+		}
+	}
+	m_pBlackboard->ChangeData("IsHoldingItem", false);
+	m_pBlackboard->ChangeData("UsedInventorySlots", m_UsedItemSlots);
+}

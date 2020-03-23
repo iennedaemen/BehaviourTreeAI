@@ -1,0 +1,593 @@
+#pragma once
+#include "Blackboard.h"
+#include "IExamInterface.h"
+#include "BehaviorTree.h"
+#include "Exam_HelperStructs.h"
+
+// conditionals
+inline BehaviorState HasMedKid(std::shared_ptr<Blackboard> pBlackboard)
+{
+	int amountMedKit;
+	bool dataAvailable = pBlackboard->GetData("AmountMedKit", amountMedKit);
+	if (!dataAvailable) BehaviorState::Fail;
+
+	if (amountMedKit > 0) return BehaviorState::Succeed;
+
+	else return BehaviorState::Fail;
+}
+
+inline BehaviorState ShouldHeal(std::shared_ptr<Blackboard> pBlackboard)
+{
+	AgentInfo agent;
+	bool dataAvailable = pBlackboard->GetData("Agent", agent);
+	if (!dataAvailable) BehaviorState::Fail;
+
+	if(agent.Health < 5)
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+inline BehaviorState IsHungry(std::shared_ptr<Blackboard> pBlackboard)
+{
+	AgentInfo agent;
+
+	bool dataAvailable = pBlackboard->GetData("Agent", agent);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (agent.Energy < 3)
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+inline BehaviorState HasFood(std::shared_ptr<Blackboard> pBlackboard)
+{
+	int amountFood = false;
+
+	bool dataAvailable = pBlackboard->GetData("AmountFood", amountFood);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (amountFood > 0)
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+inline BehaviorState HasPistol(std::shared_ptr<Blackboard> pBlackboard)
+{
+	int amountPistol = false;
+
+	bool dataAvailable = pBlackboard->GetData("AmountGuns", amountPistol);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (amountPistol > 0)
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+inline BehaviorState WantToAttack(std::shared_ptr<Blackboard> pBlackboard)
+{
+	int nrEnemies{};
+	EnemyInfo nearestEnemy{};
+
+	bool dataAvailable = pBlackboard->GetData("AmountEnemiesFOV", nrEnemies) && pBlackboard->GetData("NearestEnemy", nearestEnemy);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (nearestEnemy.Type != eEnemyType::ZOMBIE_HEAVY && nrEnemies <= 2 && nrEnemies > 0)
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+inline BehaviorState SeesItem(std::shared_ptr<Blackboard> pBlackboard)
+{
+	int nrItemsFOV{};
+
+	bool dataAvailable = pBlackboard->GetData("AmountItemsFOV", nrItemsFOV);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (nrItemsFOV > 0)
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+inline BehaviorState ShouldFlee(std::shared_ptr<Blackboard> pBlackboard)
+{
+	int nrEnemies{};
+	float fleeTime{};
+	bool fleeing = false;
+
+	bool dataAvailable = pBlackboard->GetData("AmountEnemiesFOV", nrEnemies) && pBlackboard->GetData("FleeTime", fleeTime) && pBlackboard->GetData("Fleeing", fleeing);
+	if (!dataAvailable) return BehaviorState::Fail;
+	fleeTime++;
+	if (nrEnemies > 0 || (fleeTime < 100.0f && fleeing))
+	{
+		pBlackboard->ChangeData("FleeTime", fleeTime);
+		pBlackboard->ChangeData("Fleeing", true);
+		return BehaviorState::Succeed;
+	}
+	else
+	{
+		pBlackboard->ChangeData("Fleeing", false);
+		pBlackboard->ChangeData("FleeTime", 0.0f);
+		return  BehaviorState::Fail;
+	}
+}
+
+inline BehaviorState NeedsItem(std::shared_ptr<Blackboard> pBlackboard)
+{
+	int amountFood{};
+	int amountPistols{};
+	int amountMedKits{};
+
+
+	bool dataAvailable = pBlackboard->GetData("AmountFood", amountFood) && pBlackboard->GetData("AmountGuns", amountPistols) && pBlackboard->GetData("AmountMedKit", amountMedKits);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (amountFood <= 1 || amountPistols <=0 || amountMedKits <=0)
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+////////////////////
+// HOUSES
+////////////////////
+
+inline BehaviorState HouseNotSearched(std::shared_ptr<Blackboard> pBlackboard)
+{
+	std::vector<Elite::Vector2> houses;
+
+	bool dataAvailable = pBlackboard->GetData("HousesNotSearchedPos", houses);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (!houses.empty())
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+inline BehaviorState InsideHouse(std::shared_ptr<Blackboard> pBlackboard)
+{
+	AgentInfo agent;
+
+	bool dataAvailable = pBlackboard->GetData("Agent", agent);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (agent.IsInHouse)
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+inline BehaviorState NotExploredRightUp(std::shared_ptr<Blackboard> pBlackboard)
+{
+	bool searched;
+
+	bool dataAvailable = pBlackboard->GetData("SearchedRightUp", searched);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (!searched)
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+inline BehaviorState NotExploredRightDown(std::shared_ptr<Blackboard> pBlackboard)
+{
+	bool searched;
+
+	bool dataAvailable = pBlackboard->GetData("SearchedRightDown", searched);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (!searched)
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+inline BehaviorState NotExploredLeftDown(std::shared_ptr<Blackboard> pBlackboard)
+{
+	bool searched;
+
+	bool dataAvailable = pBlackboard->GetData("SearchedLeftDown", searched);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (!searched)
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+inline BehaviorState NotExploredLeftUp(std::shared_ptr<Blackboard> pBlackboard)
+{
+	bool searched;
+
+	bool dataAvailable = pBlackboard->GetData("SearchedLeftUp", searched);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (!searched)
+		return BehaviorState::Succeed;
+	else
+		return  BehaviorState::Fail;
+}
+
+// action
+inline BehaviorState Eat(std::shared_ptr<Blackboard> pBlackboard)
+{
+	std::vector<ItemInfo> items;
+	AgentInfo pAgent;
+	int amountFood;
+	std::vector<bool> usedSlots;
+	bool dataAvailable = pBlackboard->GetData("Agent", pAgent) && pBlackboard->GetData("Items", items) 
+		&& pBlackboard->GetData("AmountFood", amountFood) && pBlackboard->GetData("UsedInventorySlots", usedSlots);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	for(size_t i{}; i < items.size(); ++i)
+	{
+		if (items[i].Type == eItemType::FOOD && usedSlots[i])
+		{
+			if(!pBlackboard->GetInterface()->Inventory_UseItem(i))
+			{
+				if (pBlackboard->GetInterface()->Inventory_RemoveItem(i))
+				{
+					amountFood--;
+				}
+				items[i].Type = eItemType::GARBAGE;
+				usedSlots[i] = false;
+				break;
+			}
+		}
+	}
+
+	pBlackboard->ChangeData("Items", items);
+	pBlackboard->ChangeData("AmountFood", amountFood);
+	pBlackboard->ChangeData("UsedInventorySlots", usedSlots);
+
+	return BehaviorState::Succeed;
+}
+
+inline BehaviorState Attack(std::shared_ptr<Blackboard> pBlackboard)
+{
+	std::vector<ItemInfo> items;
+	AgentInfo agent;
+	int amoundPistols;
+	std::vector<bool> usedSlots;
+	EnemyInfo nearestEnemy{};
+	bool dataAvailable = pBlackboard->GetData("Agent", agent) && pBlackboard->GetData("Items", items) && pBlackboard->GetData("NearestEnemy", nearestEnemy)
+		&& pBlackboard->GetData("AmountGuns", amoundPistols) && pBlackboard->GetData("UsedInventorySlots", usedSlots);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	Elite::Vector2 temp = nearestEnemy.Location - agent.Position;
+	agent.Orientation = atan(temp.y/temp.x);
+
+	for (size_t i{}; i < items.size(); ++i)
+	{
+		if (items[i].Type == eItemType::PISTOL && usedSlots[i])
+		{
+			if (!pBlackboard->GetInterface()->Inventory_UseItem(i))
+			{
+				if (pBlackboard->GetInterface()->Inventory_RemoveItem(i))
+				{
+					amoundPistols--;
+				}
+				items[i].Type = eItemType::GARBAGE;
+				usedSlots[i] = false;
+				break;
+			}
+		}
+	}
+
+	pBlackboard->ChangeData("Items", items);
+	pBlackboard->ChangeData("AmountGuns", amoundPistols);
+	pBlackboard->ChangeData("UsedInventorySlots", usedSlots);
+	pBlackboard->ChangeData("Agent", agent);
+
+	return BehaviorState::Succeed;
+}
+
+inline BehaviorState Heal(std::shared_ptr<Blackboard> pBlackboard)
+{
+	std::vector<ItemInfo> items;
+	AgentInfo agent;
+	int amoundMedKit;
+	std::vector<bool> usedSlots;
+	bool dataAvailable = pBlackboard->GetData("Agent", agent) && pBlackboard->GetData("Items", items)
+		&& pBlackboard->GetData("AmountMedKit", amoundMedKit) && pBlackboard->GetData("UsedInventorySlots", usedSlots);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	for (size_t i{}; i < items.size(); ++i)
+	{
+		if (items[i].Type == eItemType::MEDKIT && usedSlots[i])
+		{
+			if (!pBlackboard->GetInterface()->Inventory_UseItem(i))
+			{
+				if (pBlackboard->GetInterface()->Inventory_RemoveItem(i))
+				{
+					amoundMedKit--;
+					//items[i].Type = eItemType::GARBAGE;
+					//usedSlots[i] = false;
+				}
+				items[i].Type = eItemType::GARBAGE;
+				usedSlots[i] = false;
+				break;
+			}
+		}
+	}
+
+	pBlackboard->ChangeData("Items", items);
+	pBlackboard->ChangeData("AmountMedKit", amoundMedKit);
+	pBlackboard->ChangeData("UsedInventorySlots", usedSlots);
+	pBlackboard->ChangeData("Agent", agent);
+
+	return BehaviorState::Succeed;
+}
+
+inline BehaviorState Flee(std::shared_ptr<Blackboard> pBlackboard)
+{
+	AgentInfo agent;
+	EnemyInfo nearestEnemy{};
+	SteeringPlugin_Output steering;
+	int nrEnemies;
+
+	bool dataAvailable = pBlackboard->GetData("Agent", agent) && pBlackboard->GetData("NearestEnemy", nearestEnemy)
+		&& pBlackboard->GetData("Steering", steering) && pBlackboard->GetData("AmountEnemiesFOV", nrEnemies);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	Elite::Vector2 target = nearestEnemy.Location;//nearestEnemy.Location - agent.Position;
+	target *= -10;
+	target = pBlackboard->GetInterface()->NavMesh_GetClosestPathPoint(target);
+
+	steering.LinearVelocity = target; //Desired Velocity
+	steering.LinearVelocity.Normalize(); //Normalize Desired Velocity
+	steering.LinearVelocity *= agent.MaxLinearSpeed; //Rescale to Max Speed
+
+	if (Elite::Distance(target, agent.Position) < 2.f)
+	{
+		steering.LinearVelocity = Elite::ZeroVector2;
+	}
+	steering.RunMode = true;
+	pBlackboard->ChangeData("Steering", steering);
+	return BehaviorState::Succeed;
+}
+
+inline BehaviorState SeekCheckpoint(std::shared_ptr<Blackboard> pBlackboard)
+{
+	AgentInfo agent;
+	SteeringPlugin_Output steering;
+
+	bool dataAvailable = pBlackboard->GetData("Agent", agent) && pBlackboard->GetData("Steering", steering);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	Elite::Vector2 nextTargetPos = pBlackboard->GetInterface()->NavMesh_GetClosestPathPoint(pBlackboard->GetInterface()->World_GetCheckpointLocation());
+	steering.LinearVelocity = nextTargetPos - agent.Position; //Desired Velocity
+	steering.LinearVelocity.Normalize(); //Normalize Desired Velocity
+	steering.LinearVelocity *= agent.MaxLinearSpeed; //Rescale to Max Speed
+
+	if (Distance(nextTargetPos, agent.Position) < 2.f)
+	{
+		steering.LinearVelocity = Elite::ZeroVector2;
+	}
+
+	steering.RunMode = false;
+	pBlackboard->ChangeData("Steering", steering);
+
+	return BehaviorState::Succeed;
+}
+
+inline BehaviorState SeekItem(std::shared_ptr<Blackboard> pBlackboard)
+{
+	AgentInfo agent;
+	SteeringPlugin_Output steering;
+	Elite::Vector2 itemPos;
+
+	bool dataAvailable = pBlackboard->GetData("Agent", agent) && pBlackboard->GetData("Steering", steering) && pBlackboard->GetData("NearestItemPosition", itemPos);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	Elite::Vector2 nextTargetPos = pBlackboard->GetInterface()->NavMesh_GetClosestPathPoint(itemPos);
+	steering.LinearVelocity = nextTargetPos - agent.Position; //Desired Velocity
+	steering.LinearVelocity.Normalize(); //Normalize Desired Velocity
+	steering.LinearVelocity *= agent.MaxLinearSpeed; //Rescale to Max Speed
+
+	if (Distance(nextTargetPos, agent.Position) < 2.f)
+	{
+		steering.LinearVelocity = Elite::ZeroVector2;
+	}
+	steering.RunMode = false;
+	pBlackboard->ChangeData("Steering", steering);
+
+	return BehaviorState::Succeed;
+}
+
+//inline BehaviorState SeekHouse(std::shared_ptr<Blackboard> pBlackboard)
+//{
+//	std::vector<HouseInfo> housesNotSearched;
+//	SteeringPlugin_Output steering;
+//	AgentInfo agent;
+//
+//	bool dataAvailable = pBlackboard->GetData("HousesNotSearchedPos", housesNotSearched)
+//		&& pBlackboard->GetData("Steering", steering) && pBlackboard->GetData("Agent", agent);
+//	if (!dataAvailable) return BehaviorState::Fail;
+//
+//	float dist = 100000.0f;
+//	Elite::Vector2 target;
+//	for (size_t i{}; i < housesNotSearched.size(); ++i)
+//	{
+//		if(dist > Elite::Distance(housesNotSearched[i].Center, agent.Position))
+//		{
+//			dist = Elite::Distance(housesNotSearched[i].Center, agent.Position);
+//			target = housesNotSearched[i].Center;
+//		}
+//	}
+//
+//	Elite::Vector2 nextTargetPos = pBlackboard->GetInterface()->NavMesh_GetClosestPathPoint(target);
+//	steering.LinearVelocity = nextTargetPos - agent.Position; //Desired Velocity
+//	steering.LinearVelocity.Normalize(); //Normalize Desired Velocity
+//	steering.LinearVelocity *= agent.MaxLinearSpeed; //Rescale to Max Speed
+//
+//	if (Distance(nextTargetPos, agent.Position) < 2.f)
+//	{
+//		steering.LinearVelocity = Elite::ZeroVector2;
+//	}
+//	steering.RunMode = false;
+//	pBlackboard->ChangeData("Steering", steering);
+//	
+//	return  BehaviorState::Succeed;
+//}
+
+inline BehaviorState SeekHouse(std::shared_ptr<Blackboard> pBlackboard)
+{
+	HouseInfo house;
+	SteeringPlugin_Output steering;
+	AgentInfo agent;
+
+	bool dataAvailable = pBlackboard->GetData("InsideHouse", house)
+		&& pBlackboard->GetData("Steering", steering) && pBlackboard->GetData("Agent", agent);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	float dist = 100000.0f;
+	Elite::Vector2 target = house.Center;
+
+	Elite::Vector2 nextTargetPos = pBlackboard->GetInterface()->NavMesh_GetClosestPathPoint(target);
+	steering.LinearVelocity = nextTargetPos - agent.Position; //Desired Velocity
+	steering.LinearVelocity.Normalize(); //Normalize Desired Velocity
+	steering.LinearVelocity *= agent.MaxLinearSpeed; //Rescale to Max Speed
+
+	if (Distance(nextTargetPos, agent.Position) < 2.f)
+	{
+		steering.LinearVelocity = Elite::ZeroVector2;
+	}
+	steering.RunMode = false;
+	pBlackboard->ChangeData("Steering", steering);
+
+	return  BehaviorState::Succeed;
+}
+
+inline BehaviorState ExploreHouseRightUp(std::shared_ptr<Blackboard> pBlackboard)
+{
+	HouseInfo house;
+	SteeringPlugin_Output steering;
+	AgentInfo agent;
+	bool searched;
+
+	bool dataAvailable = pBlackboard->GetData("InsideHouse", house) && pBlackboard->GetData("SearchedRightUp", searched)
+		&& pBlackboard->GetData("Steering", steering) && pBlackboard->GetData("Agent", agent);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (searched) return BehaviorState::Fail;
+
+	float dist = 100000.0f;
+	Elite::Vector2 target = { house.Center.x + house.Size.x / 2, house.Center.y + house.Size.y/2};
+
+	Elite::Vector2 nextTargetPos = pBlackboard->GetInterface()->NavMesh_GetClosestPathPoint(target);
+	steering.LinearVelocity = nextTargetPos - agent.Position; //Desired Velocity
+	steering.LinearVelocity.Normalize(); //Normalize Desired Velocity
+	steering.LinearVelocity *= agent.MaxLinearSpeed; //Rescale to Max Speed
+
+	if (Distance(nextTargetPos, agent.Position) < 8.0f)
+	{
+		steering.LinearVelocity = Elite::ZeroVector2;
+		pBlackboard->ChangeData("SearchedRightUp", true);
+	}
+	steering.RunMode = false;
+	pBlackboard->ChangeData("Steering", steering);
+	return  BehaviorState::Succeed;
+}
+
+inline BehaviorState ExploreHouseRightDown(std::shared_ptr<Blackboard> pBlackboard)
+{
+	HouseInfo house;
+	SteeringPlugin_Output steering;
+	AgentInfo agent;
+	bool searched;
+
+	bool dataAvailable = pBlackboard->GetData("InsideHouse", house) && pBlackboard->GetData("SearchedRightDown", searched)
+		&& pBlackboard->GetData("Steering", steering) && pBlackboard->GetData("Agent", agent);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if(searched) return BehaviorState::Fail;
+
+	Elite::Vector2 target = { house.Center.x + house.Size.x / 2 , house.Center.y - house.Size.y / 2 };
+
+	Elite::Vector2 nextTargetPos = pBlackboard->GetInterface()->NavMesh_GetClosestPathPoint(target);
+	steering.LinearVelocity = nextTargetPos - agent.Position; //Desired Velocity
+	steering.LinearVelocity.Normalize(); //Normalize Desired Velocity
+	steering.LinearVelocity *= agent.MaxLinearSpeed; //Rescale to Max Speed
+
+	if (Distance(nextTargetPos, agent.Position) < 8.0f)
+	{
+		steering.LinearVelocity = Elite::ZeroVector2;
+		pBlackboard->ChangeData("SearchedRightDown", true);
+	}
+	steering.RunMode = false;
+	pBlackboard->ChangeData("Steering", steering);
+
+	return  BehaviorState::Succeed;
+}
+
+inline BehaviorState ExploreHouseLeftDown(std::shared_ptr<Blackboard> pBlackboard)
+{
+	HouseInfo house;
+	SteeringPlugin_Output steering;
+	AgentInfo agent;
+	bool searched;
+
+	bool dataAvailable = pBlackboard->GetData("InsideHouse", house) && pBlackboard->GetData("SearchedLeftDown", searched)
+		&& pBlackboard->GetData("Steering", steering) && pBlackboard->GetData("Agent", agent);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if (searched) return BehaviorState::Fail;
+
+	float dist = 100000.0f;
+	Elite::Vector2 target = { house.Center.x - house.Size.x / 2 , house.Center.y - house.Size.y / 2};
+
+	Elite::Vector2 nextTargetPos = pBlackboard->GetInterface()->NavMesh_GetClosestPathPoint(target);
+	steering.LinearVelocity = nextTargetPos - agent.Position; //Desired Velocity
+	steering.LinearVelocity.Normalize(); //Normalize Desired Velocity
+	steering.LinearVelocity *= agent.MaxLinearSpeed; //Rescale to Max Speed
+
+	if (Distance(nextTargetPos, agent.Position) < 8.0f)
+	{
+		steering.LinearVelocity = Elite::ZeroVector2;
+		pBlackboard->ChangeData("SearchedLeftDown", true);
+	}
+	steering.RunMode = false;
+	pBlackboard->ChangeData("Steering", steering);
+
+	return  BehaviorState::Succeed;
+}
+
+inline BehaviorState ExploreHouseLeftUp(std::shared_ptr<Blackboard> pBlackboard)
+{
+	HouseInfo house;
+	SteeringPlugin_Output steering;
+	AgentInfo agent;
+	bool searched;
+
+	bool dataAvailable = pBlackboard->GetData("InsideHouse", house) && pBlackboard->GetData("SearchedLeftUp", searched)
+		&& pBlackboard->GetData("Steering", steering) && pBlackboard->GetData("Agent", agent);
+	if (!dataAvailable) return BehaviorState::Fail;
+
+	if(searched) return BehaviorState::Fail;
+
+	float dist = 100000.0f;
+	Elite::Vector2 target = { house.Center.x - house.Size.x / 2 + 3 , house.Center.y + house.Size.y / 2 - 3 };
+
+	Elite::Vector2 nextTargetPos = pBlackboard->GetInterface()->NavMesh_GetClosestPathPoint(target);
+	steering.LinearVelocity = nextTargetPos - agent.Position; //Desired Velocity
+	steering.LinearVelocity.Normalize(); //Normalize Desired Velocity
+	steering.LinearVelocity *= agent.MaxLinearSpeed; //Rescale to Max Speed
+
+	if (Distance(nextTargetPos, agent.Position) < 8.0f)
+	{
+		steering.LinearVelocity = Elite::ZeroVector2;
+		pBlackboard->ChangeData("SearchedLeftUp", true);
+	}
+	steering.RunMode = false;
+	pBlackboard->ChangeData("Steering", steering);
+
+	return  BehaviorState::Succeed;
+}
